@@ -299,7 +299,7 @@ async def main():
     logger.info("✅ Telegram Application created")
 
     correction_conv = ConversationHandler(
-        entry_points=[MessageHandler(filters.Regex(r'^(?i)wrong$'), handle_message)],
+        entry_points=[MessageHandler(filters.Regex(r'^wrong$', flags=re.IGNORECASE), handle_message)],
         states={
             WAITING_SUBJECT: [MessageHandler(filters.TEXT & ~filters.COMMAND, correction_subject)],
             WAITING_CHAPTER: [MessageHandler(filters.TEXT & ~filters.COMMAND, correction_chapter)],
