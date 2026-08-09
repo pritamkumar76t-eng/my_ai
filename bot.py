@@ -22,23 +22,23 @@ from telegram.ext import (
 from parser import parse_lecture_text
 from chapter_matcher import ChapterMatcher
 
-# ─── Configuration ───────────────────────────────────────────
+# Configuration
 TOKEN = os.environ.get("BOT_TOKEN", "YOUR_BOT_TOKEN_HERE")
 PORT = int(os.environ.get("PORT", 8443))
 WEBHOOK_URL = os.environ.get("WEBHOOK_URL", "")
 
-# ─── Logging ───────────────────────────────────────────────────
+# Logging
 logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
     level=logging.INFO,
 )
 logger = logging.getLogger(__name__)
 
-# ─── Initialize matcher ──────────────────────────────────────
+# Initialize matcher
 DATA_DIR = os.environ.get("DATA_DIR", "./data")
 matcher = ChapterMatcher(DATA_DIR)
 
-# ─── Subject Name Cleaner ────────────────────────────────────
+# Subject Name Cleaner
 SUBJECT_DISPLAY_MAP = {
     "botny": "Botany",
     "zoology": "Zoology",
@@ -54,7 +54,7 @@ def get_subject_tag(raw_subject: str) -> str:
     return SUBJECT_DISPLAY_MAP.get(raw_subject, raw_subject)
 
 
-# ─── Handlers ──────────────────────────────────────────────────
+# Handlers
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     welcome = (
         "👋 *Welcome to Lecture Parser Bot!*\n\n"
@@ -133,14 +133,14 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(reply_text)
 
 
-# ─── Error Handler ─────────────────────────────────────────────
+# Error Handler
 async def error_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     logger.error(f"Update {update} caused error: {context.error}")
     if update and update.message:
         await update.message.reply_text("❌ Error occurred. Please try again.")
 
 
-# ─── Main / Webhook Setup ──────────────────────────────────────
+# Main / Webhook Setup
 async def main():
     application = Application.builder().token(TOKEN).build()
 
@@ -158,7 +158,7 @@ async def main():
 
         app = web.Application()
 
-                        async def webhook_handler(request):
+        async def webhook_handler(request):
             data = await request.json()
             update = Update.de_json(data, application.bot)
             await application.process_update(update)
