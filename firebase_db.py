@@ -1,7 +1,8 @@
-"""Firebase Database for learning & remembering text formats."""
+"""Firebase Database for learning, remembering, and correcting."""
 import os
 import json
 import tempfile
+import hashlib
 from datetime import datetime
 from collections import Counter
 
@@ -42,65 +43,124 @@ class FirebaseDB:
         except Exception as e:
             print(f"[Firebase] Error: {e}")
 
-    def save_interaction(self, user_id: int, raw_text: str, parsed: dict, match: dict):
-        if not self.enabled or not self.db:
-            return
+    def _text_hash(self, text: str) -> str:
+        normalized = ' '.join(text.lower().split())
+        return hashlib.md5(normalized.encode()).hexdigest()
 
-        doc = {
+    def _text_fingerprint(self, text: str) -> str:
+        import re
+        words = re.findall(r'[\u0900-\u097F\w]+', text.lower())
+        meaningful = [w for w in words if len(w) > 2]
+        fingerprint = ' '.join(sorted(meaningful[:8]))
+        return fingerprint
+
+    def save_correction(self, user_id: int, raw_text: str,
+                        correct_subject: str, correct_chapter: str,
+                        correct_lecture: str = None):
+        if not self.enabled or not self.db:
+            return False
+
+        fingerprint = self._text_fingerprint(raw_text)
+        text_hash = self._text_hash(raw_text)
+
+        correction_doc = {
             "user_id": user_id,
             "raw_text": raw_text,
-            "parsed_index": parsed.get("index"),
-            "parsed_title": parsed.get("title"),
-            "parsed_quality": parsed.get("quality"),
-            "parsed_lecture_number": parsed.get("lecture_number"),
-            "matched_subject": match.get("subject"),
-            "matched_chapter": match.get("chapter"),
-            "confidence": match.get("confidence"),
+            "text_hash": text_hash,
+            "fingerprint": fingerprint,
+            "correct_subject": correct_subject,
+            "correct_chapter": correct_chapter,
+            "correct_lecture": correct_lecture,
             "timestamp": datetime.utcnow(),
-            "format_pattern": self._detect_format_pattern(raw_text),
+            "usage_count": 1,
         }
-        self.db.collection("interactions").add(doc)
-        self._update_user_stats(user_id, match)
 
-    def _detect_format_pattern(self, text: str) -> str:
-        patterns = []
-        if "Index" in text or "इंडेक्स" in text:
-            patterns.append("has_index")
-        if "Title" in text or "टाइटल" in text or "➭" in text:
-            patterns.append("has_title_marker")
-        if "Quality" in text or "क्वालिटी" in text:
-            patterns.append("has_quality")
-        if "854x480" in text or "1280x720" in text:
-            patterns.append("has_resolution")
-        if ".mkv" in text or ".mp4" in text:
-            patterns.append("has_extension")
-        return "|".join(patterns) if patterns else "unknown"
-
-    def _update_user_stats(self, user_id: int, match: dict):
-        user_ref = self.db.collection("users").document(str(user_id))
-        user_doc = user_ref.get()
-
-        subject = match.get("subject", "Unknown")
-        chapter = match.get("chapter", "Unknown")
-
-        if user_doc.exists:
-            data = user_doc.to_dict()
-            subjects = data.get("subjects", {})
-            chapters = data.get("chapters", {})
-            subjects[subject] = subjects.get(subject, 0) + 1
-            chapters[chapter] = chapters.get(chapter, 0) + 1
-            user_ref.update({
-                "subjects": subjects,
-                "chapters": chapters,
-                "last_active": datetime.utcnow(),
+        existing = self._find_existing_correction(user_id, fingerprint)
+        if existing:
+            doc_id = existing["id"]
+            current_count = existing.get("usage_count", 1)
+            self.db.collection("corrections").document(doc_id).update({
+                "correct_subject": correct_subject,
+                "correct_chapter": correct_chapter,
+                "correct_lecture": correct_lecture,
+                "timestamp": datetime.utcnow(),
+                "usage_count": current_count + 1,
+                "raw_text": raw_text,
             })
         else:
-            user_ref.set({
-                "subjects": {subject: 1},
-                "chapters": {chapter: 1},
-                "first_seen": datetime.utcnow(),
-                "last_active": datetime.utcnow(),
-            })
+            self.db.collection("corrections").add(correction_doc)
+
+        self.db.collection("users").document(str(user_id)).collection("corrections").add({
+            "text_preview": raw_text[:100],
+            "correct_subject": correct_subject,
+            "correct_chapter": correct_chapter,
+            "timestamp": datetime.utcnow(),
+        })
+
+        return True
+
+    def _find_existing_correction(self, user_id: int, fingerprint: str) -> dict:
+        if not self.enabled or not self.db:
+            return None
+
+        docs = (
+            self.db.collection("corrections")
+            .where("user_id", "==", user_id)
+            .where("fingerprint", "==", fingerprint)
+            .limit(1)
+            .stream()
+        )
+
+        for doc in docs:
+            data = doc.to_dict()
+            data["id"] = doc.id
+            return data
+        return None
+
+    def find_correction(self, user_id: int, text: str) -> dict:
+        if not self.enabled or not self.db:
+            return None
+
+        fingerprint = self._text_fingerprint(text)
+        text_hash = self._text_hash(text)
+
+        docs = (
+            self.db.collection("corrections")
+            .where("user_id", "==", user_id)
+            .where("text_hash", "==", text_hash)
+            .limit(1)
+            .stream()
+        )
+
+        for doc in docs:
+            data = doc.to_dict()
+            return {
+                "subject": data.get("correct_subject"),
+                "chapter": data.get("correct_chapter"),
+                "lecture": data.get("correct_lecture"),
+                "confidence": 100,
+                "from_correction": True,
+            }
+
+        docs = (
+            self.db.collection("corrections")
+            .where("user_id", "==", user_id)
+            .where("fingerprint", "==", fingerprint)
+            .limit(1)
+            .stream()
+        )
+
+        for doc in docs:
+            data = doc.to_dict()
+            return {
+                "subject": data.get("correct_subject"),
+                "chapter": data.get("correct_chapter"),
+                "lecture": data.get("correct_lecture"),
+                "confidence": 95,
+                "from_correction": True,
+            }
+
+        return None
 
     def get_user_top_subjects(self, user_id: int, top_n: int = 3) -> list:
         if not self.enabled or not self.db:
@@ -147,3 +207,45 @@ class FirebaseDB:
             current_match["confidence"] = min(current_match.get("confidence", 0) + 15, 100)
             current_match["history_boosted"] = True
         return current_match
+
+    def save_interaction(self, user_id: int, raw_text: str, parsed: dict, match: dict):
+        if not self.enabled or not self.db:
+            return
+        doc = {
+            "user_id": user_id,
+            "raw_text": raw_text,
+            "parsed_index": parsed.get("index"),
+            "parsed_title": parsed.get("title"),
+            "parsed_quality": parsed.get("quality"),
+            "parsed_lecture_number": parsed.get("lecture_number"),
+            "matched_subject": match.get("subject"),
+            "matched_chapter": match.get("chapter"),
+            "confidence": match.get("confidence"),
+            "timestamp": datetime.utcnow(),
+        }
+        self.db.collection("interactions").add(doc)
+        self._update_user_stats(user_id, match)
+
+    def _update_user_stats(self, user_id: int, match: dict):
+        user_ref = self.db.collection("users").document(str(user_id))
+        user_doc = user_ref.get()
+        subject = match.get("subject", "Unknown")
+        chapter = match.get("chapter", "Unknown")
+        if user_doc.exists:
+            data = user_doc.to_dict()
+            subjects = data.get("subjects", {})
+            chapters = data.get("chapters", {})
+            subjects[subject] = subjects.get(subject, 0) + 1
+            chapters[chapter] = chapters.get(chapter, 0) + 1
+            user_ref.update({
+                "subjects": subjects,
+                "chapters": chapters,
+                "last_active": datetime.utcnow(),
+            })
+        else:
+            user_ref.set({
+                "subjects": {subject: 1},
+                "chapters": {chapter: 1},
+                "first_seen": datetime.utcnow(),
+                "last_active": datetime.utcnow(),
+            })
