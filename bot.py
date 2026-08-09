@@ -1,9 +1,9 @@
-"""Telegram Bot for Lecture Index Parser & Subject/Chapter Detection.
-Reply Format: @Subject, @Chapter, @Lec XX
-"""
+"""Telegram Bot for Lecture Index Parser & Subject/Chapter Detection."""
 import os
 import logging
+import asyncio
 
+from aiohttp import web
 from telegram import Update
 from telegram.ext import (
     Application,
@@ -32,7 +32,6 @@ logger = logging.getLogger(__name__)
 DATA_DIR = os.environ.get("DATA_DIR", "./data")
 matcher = ChapterMatcher(DATA_DIR)
 
-# Subject Name Cleaner
 SUBJECT_DISPLAY_MAP = {
     "botny": "Botany",
     "zoology": "Zoology",
@@ -113,7 +112,16 @@ async def error_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("❌ Error occurred. Please try again.")
 
 
-def main():
+async def main():
+    """Main async function for webhook server."""
+    if not TOKEN:
+        logger.error("BOT_TOKEN not set!")
+        return
+
+    if not WEBHOOK_URL or "your-app" in WEBHOOK_URL:
+        logger.error("WEBHOOK_URL not set correctly! Set it to your actual Render URL.")
+        return
+
     application = Application.builder().token(TOKEN).build()
 
     application.add_handler(CommandHandler("start", start))
@@ -121,17 +129,33 @@ def main():
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
     application.add_error_handler(error_handler)
 
-    if WEBHOOK_URL:
-        logger.info(f"Starting webhook on port {PORT}")
-        application.run_webhook(
-            listen="0.0.0.0",
-            port=PORT,
-            webhook_url=f"{WEBHOOK_URL}/webhook/{TOKEN}",
-        )
-    else:
-        logger.info("Starting polling mode...")
-        application.run_polling()
+    await application.initialize()
+    await application.start()
+
+    webhook_path = f"/webhook/{TOKEN}"
+    full_webhook_url = f"{WEBHOOK_URL}{webhook_path}"
+    await application.bot.set_webhook(url=full_webhook_url)
+    logger.info(f"Webhook set to: {full_webhook_url}")
+
+    aio_app = web.Application()
+
+    async def webhook_handler(request):
+        data = await request.json()
+        update = Update.de_json(data, application.bot)
+        await application.process_update(update)
+        return web.Response()
+
+    aio_app.router.add_post(webhook_path, webhook_handler)
+
+    runner = web.AppRunner(aio_app)
+    await runner.setup()
+    site = web.TCPSite(runner, "0.0.0.0", PORT)
+    await site.start()
+    logger.info(f"Server running on port {PORT}")
+
+    while True:
+        await asyncio.sleep(3600)
 
 
 if __name__ == "__main__":
-    main()
+    asyncio.run(main())
