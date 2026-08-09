@@ -173,25 +173,38 @@ class FirebaseDB:
         return [s[0] for s in sorted_subjects[:top_n]]
 
     def get_learned_lecture_pattern(self, user_id: int) -> dict:
+        """Fetch recent interactions and sort in Python (no Firestore index needed)."""
         if not self.enabled or not self.db:
             return {}
+
+        # Fetch by user_id only, then sort in Python
         docs = (
             self.db.collection("interactions")
             .where("user_id", "==", user_id)
-            .order_by("timestamp", direction=firestore.Query.DESCENDING)
-            .limit(20)
+            .limit(50)
             .stream()
         )
-        lecture_nums = []
+
+        interactions = []
         for doc in docs:
             data = doc.to_dict()
+            interactions.append(data)
+
+        # Sort by timestamp in Python (descending)
+        interactions.sort(key=lambda x: x.get("timestamp", datetime.min), reverse=True)
+
+        lecture_nums = []
+        for data in interactions[:20]:
             lec = data.get("parsed_lecture_number")
             if lec:
                 lecture_nums.append(lec)
+
         if not lecture_nums:
             return {}
+
         counter = Counter(lecture_nums)
         most_common = counter.most_common(1)[0]
+
         return {
             "most_common_lecture": most_common[0],
             "frequency": most_common[1],
