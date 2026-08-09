@@ -158,11 +158,10 @@ async def main():
 
         app = web.Application()
 
-        async def webhook_handler(request):
+                async def webhook_handler(request):
             data = await request.json()
-            # ✅ NEW (correct way)
-update = Update.de_json(data, application.bot)
-await application.process_update(update)
+            update = Update.de_json(data, application.bot)
+            await application.process_update(update)
             return web.Response()
 
         app.router.add_post(webhook_path, webhook_handler)
