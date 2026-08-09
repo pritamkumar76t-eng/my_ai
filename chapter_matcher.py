@@ -1,4 +1,4 @@
-"""Chapter and Subject matcher using fuzzy string matching."""
+"""Chapter and Subject matcher using fuzzy string matching + Firebase history."""
 import os
 import re
 from difflib import SequenceMatcher
@@ -12,7 +12,10 @@ class ChapterMatcher:
         self._load_data(data_dir)
 
     def _load_data(self, data_dir):
-        """Load all subject files and parse chapters/topics."""
+        if not os.path.exists(data_dir):
+            print(f"[Warning] Data directory not found: {data_dir}")
+            return
+
         for filename in os.listdir(data_dir):
             if not filename.endswith('.txt'):
                 continue
@@ -26,7 +29,7 @@ class ChapterMatcher:
             self.subjects[subject] = content
             self.chapters[subject] = []
 
-            lines = content.split('\n')
+            lines = content.splitlines()
             current_chapter = None
             current_topics = []
 
@@ -58,7 +61,6 @@ class ChapterMatcher:
                 self.chapters[subject].append((current_chapter, current_topics))
 
     def _similarity(self, a: str, b: str) -> float:
-        """Calculate string similarity ratio."""
         a = a.lower().strip()
         b = b.lower().strip()
         if not a or not b:
@@ -66,7 +68,6 @@ class ChapterMatcher:
         return SequenceMatcher(None, a, b).ratio()
 
     def _token_match_score(self, text: str, topic: str) -> float:
-        """Score based on token overlap (capped at 1.0)."""
         text_tokens = set(re.findall(r'\w+', text.lower()))
         topic_tokens = set(re.findall(r'\w+', topic.lower()))
 
@@ -80,20 +81,19 @@ class ChapterMatcher:
 
         phrase_bonus = 0
         if topic.lower() in text.lower():
-            phrase_bonus = 0.3
+            phrase_bonus = 0.35
         elif any(word in text.lower() for word in topic.lower().split() if len(word) > 3):
-            phrase_bonus = 0.1
+            phrase_bonus = 0.12
 
         return min(jaccard + phrase_bonus, 1.0)
 
     def _score_text_against_chapter(self, text: str, chapter_name: str, topics: list) -> float:
-        """Score a text against a chapter and its topics."""
         chap_sim = self._similarity(text, chapter_name)
         chap_token = self._token_match_score(text, chapter_name)
 
         best_topic_sim = 0
         best_topic_token = 0
-        for topic in topics[:25]:
+        for topic in topics[:30]:
             t_sim = self._similarity(text, topic)
             t_token = self._token_match_score(text, topic)
             if t_sim > best_topic_sim:
@@ -101,11 +101,11 @@ class ChapterMatcher:
             if t_token > best_topic_token:
                 best_topic_token = t_token
 
-        score = max(chap_sim, best_topic_sim) * 0.35 + max(chap_token, best_topic_token) * 0.65
+        score = max(chap_sim, best_topic_sim) * 0.30 + max(chap_token, best_topic_token) * 0.70
         return min(score, 1.0)
 
-    def find_best_match(self, text: str, core_text: str = None, top_n: int = 3) -> dict:
-        """Find best matching subject and chapter for given text."""
+    def find_best_match(self, text: str, core_text: str = None,
+                        user_history_subjects: list = None, top_n: int = 3) -> dict:
         if not text:
             return {"subject": "Unknown", "chapter": "Unknown", "confidence": 0, "candidates": []}
 
@@ -127,7 +127,7 @@ class ChapterMatcher:
                     if score > best_score:
                         best_score = score
 
-                if best_score > 0.05:
+                if best_score > 0.04:
                     all_candidates.append({
                         "subject": subject,
                         "chapter": chapter_name,
@@ -138,6 +138,14 @@ class ChapterMatcher:
 
         if not all_candidates:
             return {"subject": "Unknown", "chapter": "Unknown", "confidence": 0, "candidates": []}
+
+        # Boost score for subjects in user's history
+        if user_history_subjects:
+            for cand in all_candidates:
+                if cand["subject"] in user_history_subjects:
+                    cand["score"] = min(cand["score"] + 0.15, 1.0)
+
+            all_candidates.sort(key=lambda x: x["score"], reverse=True)
 
         best = all_candidates[0]
         return {
