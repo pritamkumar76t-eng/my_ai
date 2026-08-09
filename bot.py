@@ -1,7 +1,8 @@
-"""Smart Telegram Bot with Firebase Learning."""
+"""Smart Telegram Bot with Firebase Learning & Correction System."""
 import os
 import logging
 import asyncio
+import re
 from aiohttp import web
 
 from telegram import Update
@@ -9,6 +10,7 @@ from telegram.ext import (
     Application,
     CommandHandler,
     MessageHandler,
+    ConversationHandler,
     ContextTypes,
     filters,
 )
@@ -43,6 +45,14 @@ SUBJECT_DISPLAY_MAP = {
     "Inorganic Chemistry": "InorganicChemistry",
 }
 
+# Conversation States
+WAITING_SUBJECT = 1
+WAITING_CHAPTER = 2
+WAITING_LECTURE = 3
+
+# Store last message for correction context
+user_last_messages = {}
+
 
 def get_subject_tag(raw: str) -> str:
     return SUBJECT_DISPLAY_MAP.get(raw, raw)
@@ -56,7 +66,9 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "• @Subject\n"
         "• @Chapter\n"
         "• @Lec XX\n\n"
-        "🧠 I remember your patterns and get smarter over time!"
+        "⚠️ If I am *WRONG*, just type: *wrong*\n"
+        "I will ask what is correct and learn from it!\n\n"
+        "📂 Supported: Physics, Chemistry, Biology, Botany, Zoology"
     )
     await update.message.reply_text(welcome, parse_mode="Markdown")
 
@@ -67,11 +79,16 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "/start - Start the bot\n"
         "/help - Show help\n"
         "/stats - Show your learning stats\n\n"
-        "*Features:*\n"
-        "• Any digit count for lecture numbers\n"
-        "• Learns your text format\n"
-        "• Hindi/English chapter matching\n"
-        "• Confidence improves with use"
+        "*How to correct me:*\n"
+        "1️⃣ If my answer is wrong, type: *wrong*\n"
+        "2️⃣ I will ask: 'What is the correct Subject?'\n"
+        "3️⃣ Then: 'What is the correct Chapter?'\n"
+        "4️⃣ Then: 'What is the Lecture number?' (or type 'skip')\n"
+        "5️⃣ I will remember and never make that mistake again!\n\n"
+        "*Reply Rules:*\n"
+        "• @SubjectTag\n"
+        "• @ChapterTag\n"
+        "• @Lec XX (auto-detected)"
     )
     await update.message.reply_text(help_text, parse_mode="Markdown")
 
@@ -101,7 +118,34 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("⚠️ Please send a valid lecture text.")
         return
 
-    # Learn from history
+    # Check if user said "wrong"
+    if text.strip().lower() == "wrong":
+        await update.message.reply_text(
+            "❓ I am sorry! What is the *correct Subject*?\n"
+            "(e.g., Botany, Physics, OrganicChemistry, etc.)"
+        )
+        return WAITING_SUBJECT
+
+    # Check Firebase Corrections FIRST
+    correction = None
+    if firebase.enabled:
+        correction = firebase.find_correction(user_id, text)
+
+    if correction:
+        reply_lines = []
+        reply_lines.append(f"@{get_subject_tag(correction['subject'])}")
+        reply_lines.append(f"@{correction['chapter']}")
+        if correction.get("lecture"):
+            reply_lines.append(f"@Lec {correction['lecture']}")
+        reply_lines.append("\n✅ *Answer from your previous correction*")
+        await update.message.reply_text("\n".join(reply_lines), parse_mode="Markdown")
+
+        if firebase.enabled:
+            parsed = parse_lecture_text(text)
+            firebase.save_interaction(user_id, text, parsed, correction)
+        return
+
+    # Normal Flow
     history_lectures = []
     user_history_subjects = []
     if firebase.enabled:
@@ -109,24 +153,25 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         history_lectures = learned.get("all_lectures", [])
         user_history_subjects = firebase.get_user_top_subjects(user_id)
 
-    # Parse text
     parsed = parse_lecture_text(text, history_lectures=history_lectures)
-
-    # Match subject/chapter
     search_text = parsed.get("clean_title") or parsed.get("raw_title") or text
     core_text = parsed.get("core_title")
 
     match_result = matcher.find_best_match(
-        search_text,
-        core_text,
+        search_text, core_text,
         user_history_subjects=user_history_subjects,
     )
 
-    # Boost confidence with Firebase
     if firebase.enabled:
         match_result = firebase.boost_confidence_with_history(user_id, match_result)
 
-    # Build reply
+    # Store for potential correction
+    user_last_messages[user_id] = {
+        "raw_text": text,
+        "parsed": parsed,
+        "match": match_result,
+    }
+
     reply_lines = []
     reply_lines.append(f"@{get_subject_tag(match_result['subject'])}")
     reply_lines.append(f"@{match_result['chapter']}")
@@ -134,12 +179,80 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if parsed.get("lecture_number"):
         reply_lines.append(f"@Lec {parsed['lecture_number']}")
 
-    await update.message.reply_text("\n".join(reply_lines))
+    reply_lines.append("\n⚠️ If this is *WRONG*, type: *wrong*")
+    await update.message.reply_text("\n".join(reply_lines), parse_mode="Markdown")
 
-    # Save to Firebase for learning
     if firebase.enabled:
         firebase.save_interaction(user_id, text, parsed, match_result)
         logger.info(f"[Learned] User {user_id} -> {match_result['subject']}/{match_result['chapter']}")
+
+
+async def correction_subject(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    subject = update.message.text.strip()
+    context.user_data["correction_subject"] = subject
+
+    await update.message.reply_text(
+        "✅ Subject noted!\n\n"
+        "❓ Now what is the *correct Chapter*?\n"
+        "(e.g., कोशिका : जीवन की इकाई, समतल में गति, etc.)"
+    )
+    return WAITING_CHAPTER
+
+
+async def correction_chapter(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    chapter = update.message.text.strip()
+    context.user_data["correction_chapter"] = chapter
+
+    await update.message.reply_text(
+        "✅ Chapter noted!\n\n"
+        "❓ What is the *Lecture number*?\n"
+        "(Type the number, or type *skip* if not sure)"
+    )
+    return WAITING_LECTURE
+
+
+async def correction_lecture(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    lecture_input = update.message.text.strip()
+
+    lecture = None
+    if lecture_input.lower() != "skip":
+        num_match = re.search(r'\d+', lecture_input)
+        if num_match:
+            lecture = num_match.group().zfill(2)
+
+    subject = context.user_data.get("correction_subject", "Unknown")
+    chapter = context.user_data.get("correction_chapter", "Unknown")
+    last_msg = user_last_messages.get(user_id, {})
+    raw_text = last_msg.get("raw_text", "")
+
+    if firebase.enabled and raw_text:
+        firebase.save_correction(user_id, raw_text, subject, chapter, lecture)
+
+    reply_lines = [
+        "🧠 *Thank you! I have learned the correct answer:*",
+        f"@{subject}",
+        f"@{chapter}",
+    ]
+    if lecture:
+        reply_lines.append(f"@Lec {lecture}")
+    reply_lines.append("\n✅ I will remember this for next time!")
+
+    await update.message.reply_text("\n".join(reply_lines), parse_mode="Markdown")
+
+    context.user_data.clear()
+    if user_id in user_last_messages:
+        del user_last_messages[user_id]
+
+    return ConversationHandler.END
+
+
+async def cancel_correction(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text("❌ Correction cancelled.")
+    context.user_data.clear()
+    return ConversationHandler.END
 
 
 async def error_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -159,9 +272,20 @@ async def main():
 
     application = Application.builder().token(TOKEN).build()
 
+    correction_conv = ConversationHandler(
+        entry_points=[MessageHandler(filters.Regex(r'^(?i)wrong$'), handle_message)],
+        states={
+            WAITING_SUBJECT: [MessageHandler(filters.TEXT & ~filters.COMMAND, correction_subject)],
+            WAITING_CHAPTER: [MessageHandler(filters.TEXT & ~filters.COMMAND, correction_chapter)],
+            WAITING_LECTURE: [MessageHandler(filters.TEXT & ~filters.COMMAND, correction_lecture)],
+        },
+        fallbacks=[CommandHandler("cancel", cancel_correction)],
+    )
+
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CommandHandler("help", help_command))
     application.add_handler(CommandHandler("stats", stats_command))
+    application.add_handler(correction_conv)
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
     application.add_error_handler(error_handler)
 
