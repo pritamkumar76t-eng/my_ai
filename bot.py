@@ -15,6 +15,7 @@ from telegram.ext import (
     ContextTypes,
     filters,
 )
+from telegram.ext.filters import MessageFilter
 
 # ─── Debug: Print env vars at startup ───
 print("=" * 60, file=sys.stderr)
@@ -44,16 +45,11 @@ logger = logging.getLogger(__name__)
 
 # ─── Validate Config ─────────────────────────────────────────
 if not TOKEN:
-    logger.error("❌ BOT_TOKEN is empty! Set it in Render Environment Variables.")
+    logger.error("❌ BOT_TOKEN is empty!")
     sys.exit(1)
 
-if not WEBHOOK_URL:
-    logger.error("❌ WEBHOOK_URL is empty! Set it in Render Environment Variables.")
-    sys.exit(1)
-
-if "your-app" in WEBHOOK_URL or "example" in WEBHOOK_URL:
+if not WEBHOOK_URL or "your-app" in WEBHOOK_URL or "example" in WEBHOOK_URL:
     logger.error(f"❌ WEBHOOK_URL is still a placeholder: {WEBHOOK_URL}")
-    logger.error("   Go to Render Dashboard → Environment → Set your actual app URL")
     sys.exit(1)
 
 logger.info(f"✅ Config OK. WEBHOOK_URL: {WEBHOOK_URL}")
@@ -84,11 +80,19 @@ WAITING_LECTURE = 3
 # Store last message for correction context
 user_last_messages = {}
 
+# ─── Custom Filter for "wrong" (case-insensitive) ────────────
+class IsWrong(MessageFilter):
+    def filter(self, message):
+        return message.text is not None and message.text.strip().lower() == "wrong"
+
+wrong_filter = IsWrong()
+
 
 def get_subject_tag(raw: str) -> str:
     return SUBJECT_DISPLAY_MAP.get(raw, raw)
 
 
+# ─── Commands ──────────────────────────────────────────────────
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     welcome = (
         "👋 *Welcome to Smart Lecture Parser Bot!*\n\n"
@@ -141,6 +145,7 @@ async def stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("📊 Firebase not connected. Stats unavailable.")
 
 
+# ─── Main Message Handler ─────────────────────────────────────
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text
     user_id = update.effective_user.id
@@ -218,6 +223,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         logger.info(f"[Learned] User {user_id} -> {match_result['subject']}/{match_result['chapter']}")
 
 
+# ─── Correction Conversation ─────────────────────────────────
 async def correction_subject(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     subject = update.message.text.strip()
@@ -292,6 +298,7 @@ async def error_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("❌ Error occurred. Please try again.")
 
 
+# ─── Main ──────────────────────────────────────────────────────
 async def main():
     logger.info("Starting bot initialization...")
 
@@ -299,7 +306,7 @@ async def main():
     logger.info("✅ Telegram Application created")
 
     correction_conv = ConversationHandler(
-        entry_points=[MessageHandler(filters.Regex(r'^wrong$', flags=re.IGNORECASE), handle_message)],
+        entry_points=[MessageHandler(wrong_filter, handle_message)],
         states={
             WAITING_SUBJECT: [MessageHandler(filters.TEXT & ~filters.COMMAND, correction_subject)],
             WAITING_CHAPTER: [MessageHandler(filters.TEXT & ~filters.COMMAND, correction_chapter)],
