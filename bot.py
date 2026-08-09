@@ -42,19 +42,19 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 if not TOKEN:
-    logger.error("❌ BOT_TOKEN is empty!")
+    logger.error("BOT_TOKEN is empty!")
     sys.exit(1)
 
 if not WEBHOOK_URL or "your-app" in WEBHOOK_URL or "example" in WEBHOOK_URL:
-    logger.error(f"❌ WEBHOOK_URL is still a placeholder: {WEBHOOK_URL}")
+    logger.error(f"WEBHOOK_URL placeholder: {WEBHOOK_URL}")
     sys.exit(1)
 
-logger.info(f"✅ Config OK. WEBHOOK_URL: {WEBHOOK_URL}")
+logger.info(f"Config OK. WEBHOOK_URL: {WEBHOOK_URL}")
 
 DATA_DIR = os.environ.get("DATA_DIR", "./data")
 logger.info(f"Loading data from: {DATA_DIR}")
 matcher = ChapterMatcher(DATA_DIR)
-logger.info("✅ ChapterMatcher loaded")
+logger.info("ChapterMatcher loaded")
 
 firebase = FirebaseDB()
 logger.info(f"Firebase enabled: {firebase.enabled}")
@@ -74,7 +74,6 @@ SUBJECT_DISPLAY_MAP = {
 WAITING_SUBJECT = 1
 WAITING_CHAPTER = 2
 WAITING_LECTURE = 3
-
 user_last_messages = {}
 
 
@@ -92,16 +91,14 @@ def get_subject_tag(raw: str) -> str:
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     welcome = (
         "👋 *Smart Lecture Parser Bot*\n\n"
-        "📌 Send me lecture text — I learn from every message!\n\n"
-        "🎥 *NEW: Video Frame OCR!*\n"
-        "Send text + video link together\n"
-        "I will read video frames (1-6 sec) via OCR\n"
-        "and cross-verify with your text!\n\n"
-        "🤖 Reply Format:\n"
-        "• @Subject\n"
-        "• @Chapter\n"
-        "• @Lec XX\n\n"
-        "⚠️ If *WRONG*, type: *wrong* → I learn!"
+        "📌 Send lecture text — I learn!\n\n"
+        "🎥 *Video Frame OCR:*\n"
+        "Send text + video link\n"
+        "I read video frames 1-6 sec\n"
+        "Extract Hindi text via OCR\n"
+        "Cross-verify with your text!\n\n"
+        "🤖 Format: @Subject @Chapter @Lec XX\n\n"
+        "⚠️ Wrong? Type: *wrong*"
     )
     await update.message.reply_text(welcome, parse_mode="Markdown")
 
@@ -111,10 +108,10 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "*Commands:* /start /help /stats\n\n"
         "*Video Frame OCR:*\n"
         "Send text + video link\n"
-        "Bot reads video frames 1-6 sec\n"
-        "Extracts Hindi text overlay via OCR\n"
-        "Cross-verifies with your text!\n\n"
-        "*Correction:* Type *wrong* → tell correct answer"
+        "Bot reads frames 1-6 sec\n"
+        "Hindi OCR text overlay\n"
+        "Cross-verifies!\n\n"
+        "*Correction:* Type *wrong*"
     )
     await update.message.reply_text(help_text, parse_mode="Markdown")
 
@@ -124,10 +121,8 @@ async def stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if firebase.enabled:
         top_subjects = firebase.get_user_top_subjects(user_id)
         learned = firebase.get_learned_lecture_pattern(user_id)
-        text = (
-            "📊 *Your Stats*\n\n"
-            f"🎯 Top: {', '.join(top_subjects) if top_subjects else 'None yet'}\n"
-        )
+        text = "📊 *Your Stats*\n\n"
+        text += f"🎯 Top: {', '.join(top_subjects) if top_subjects else 'None yet'}\n"
         if learned:
             text += f"📚 Pattern: {learned.get('most_common_lecture', 'N/A')}\n"
         await update.message.reply_text(text, parse_mode="Markdown")
@@ -140,7 +135,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
 
     if not text or len(text.strip()) < 5:
-        await update.message.reply_text("⚠️ Please send a valid lecture text.")
+        await update.message.reply_text("⚠️ Please send valid lecture text.")
         return
 
     if text.strip().lower() == "wrong":
@@ -172,7 +167,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         reply_lines.append(f"@{correction['chapter']}")
         if correction.get("lecture"):
             reply_lines.append(f"@Lec {correction['lecture']}")
-        reply_lines.append("\n✅ *From your previous correction*")
+        reply_lines.append("\n✅ *From previous correction*")
         await update.message.reply_text("\n".join(reply_lines), parse_mode="Markdown")
 
         if firebase.enabled:
@@ -211,7 +206,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         if video_result['text']:
             await update.message.reply_text(
-                f"📝 *Video OCR found:*\n`{video_result['text'][:200]}`",
+                f"📝 *Video OCR:*\n`{video_result['text'][:200]}`",
                 parse_mode="Markdown"
             )
 
@@ -233,10 +228,10 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 reply_lines.append(f"@Lec {cross_result['lecture']}")
 
             if cross_result['verified']:
-                reply_lines.append(f"\n✅ *CROSS-VERIFIED!* Confidence: {cross_result['confidence']}%")
-                reply_lines.append("📹 Video OCR + Text both match!")
+                reply_lines.append(f"\n✅ *CROSS-VERIFIED!* {cross_result['confidence']}%")
+                reply_lines.append("📹 Video OCR + Text match!")
             else:
-                reply_lines.append(f"\n⚠️ *Text result only* (confidence: {cross_result['confidence']}%)")
+                reply_lines.append(f"\n⚠️ *Text only* ({cross_result['confidence']}%)")
                 if cross_result.get('warning'):
                     reply_lines.append(cross_result['warning'])
 
@@ -258,10 +253,10 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 firebase.save_interaction(user_id, text, parsed, final_match)
             return
         else:
-            error_msg = video_result.get('error', 'Unknown error')
+            error_msg = video_result.get('error', 'Unknown')
             await update.message.reply_text(
-                f"⚠️ *Video found but OCR failed:* {error_msg}\n"
-                "Using text analysis only...",
+                f"⚠️ *Video OCR failed:* {error_msg}\n"
+                "Using text only...",
                 parse_mode="Markdown"
             )
 
@@ -272,7 +267,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if parsed.get("lecture_number"):
         reply_lines.append(f"@Lec {parsed['lecture_number']}")
 
-    reply_lines.append("\n⚠️ If this is *WRONG*, type: *wrong*")
+    reply_lines.append("\n⚠️ If *WRONG*, type: *wrong*")
     await update.message.reply_text("\n".join(reply_lines), parse_mode="Markdown")
 
     user_last_messages[user_id] = {
@@ -283,7 +278,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if firebase.enabled:
         firebase.save_interaction(user_id, text, parsed, text_match)
-        logger.info(f"[Learned] User {user_id} -> {text_match['subject']}/{text_match['chapter']}")
 
 
 async def correction_subject(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -293,8 +287,8 @@ async def correction_subject(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
     await update.message.reply_text(
         "✅ Subject noted!\n\n"
-        "❓ Now what is the *correct Chapter*?\n"
-        "(e.g., कोशिका : जीवन की इकाई, समतल में गति)"
+        "❓ Correct *Chapter*?\n"
+        "(e.g., कोशिका : जीवन की इकाई)"
     )
     return WAITING_CHAPTER
 
@@ -306,7 +300,7 @@ async def correction_chapter(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
     await update.message.reply_text(
         "✅ Chapter noted!\n\n"
-        "❓ What is the *Lecture number*?\n"
+        "❓ Lecture number?\n"
         "(Type number, or *skip*)"
     )
     return WAITING_LECTURE
@@ -319,4 +313,100 @@ async def correction_lecture(update: Update, context: ContextTypes.DEFAULT_TYPE)
     lecture = None
     if lecture_input.lower() != "skip":
         num_match = re.search(r'\d+', lecture_input)
-        if num_match
+        if num_match:
+            lecture = num_match.group().zfill(2)
+
+    subject = context.user_data.get("correction_subject", "Unknown")
+    chapter = context.user_data.get("correction_chapter", "Unknown")
+    last_msg = user_last_messages.get(user_id, {})
+    raw_text = last_msg.get("raw_text", "")
+
+    if firebase.enabled and raw_text:
+        firebase.save_correction(user_id, raw_text, subject, chapter, lecture)
+
+    reply_lines = [
+        "🧠 *Learned!*",
+        f"@{subject}",
+        f"@{chapter}",
+    ]
+    if lecture:
+        reply_lines.append(f"@Lec {lecture}")
+    reply_lines.append("\n✅ Remembered!")
+
+    await update.message.reply_text("\n".join(reply_lines), parse_mode="Markdown")
+
+    context.user_data.clear()
+    if user_id in user_last_messages:
+        del user_last_messages[user_id]
+
+    return ConversationHandler.END
+
+
+async def cancel_correction(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text("❌ Cancelled.")
+    context.user_data.clear()
+    return ConversationHandler.END
+
+
+async def error_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    logger.error(f"Update {update} caused error: {context.error}")
+    if update and update.message:
+        await update.message.reply_text("❌ Error. Try again.")
+
+
+async def main():
+    logger.info("Starting bot...")
+
+    application = Application.builder().token(TOKEN).build()
+    logger.info("Application created")
+
+    correction_conv = ConversationHandler(
+        entry_points=[MessageHandler(wrong_filter, handle_message)],
+        states={
+            WAITING_SUBJECT: [MessageHandler(filters.TEXT & ~filters.COMMAND, correction_subject)],
+            WAITING_CHAPTER: [MessageHandler(filters.TEXT & ~filters.COMMAND, correction_chapter)],
+            WAITING_LECTURE: [MessageHandler(filters.TEXT & ~filters.COMMAND, correction_lecture)],
+        },
+        fallbacks=[CommandHandler("cancel", cancel_correction)],
+    )
+
+    application.add_handler(CommandHandler("start", start))
+    application.add_handler(CommandHandler("help", help_command))
+    application.add_handler(CommandHandler("stats", stats_command))
+    application.add_handler(correction_conv)
+    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
+    application.add_error_handler(error_handler)
+
+    logger.info("Handlers registered")
+
+    await application.initialize()
+    await application.start()
+    logger.info("Started")
+
+    webhook_path = f"/webhook/{TOKEN}"
+    full_url = f"{WEBHOOK_URL}{webhook_path}"
+    await application.bot.set_webhook(url=full_url)
+    logger.info(f"Webhook: {full_url}")
+
+    aio_app = web.Application()
+
+    async def webhook_handler(request):
+        data = await request.json()
+        update = Update.de_json(data, application.bot)
+        await application.process_update(update)
+        return web.Response()
+
+    aio_app.router.add_post(webhook_path, webhook_handler)
+
+    runner = web.AppRunner(aio_app)
+    await runner.setup()
+    site = web.TCPSite(runner, "0.0.0.0", PORT)
+    await site.start()
+    logger.info(f"Server on port {PORT}")
+
+    while True:
+        await asyncio.sleep(3600)
+
+
+if __name__ == "__main__":
+    asyncio.run(main())
