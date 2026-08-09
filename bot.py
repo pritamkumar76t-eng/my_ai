@@ -158,7 +158,7 @@ async def main():
 
         app = web.Application()
 
-                async def webhook_handler(request):
+                        async def webhook_handler(request):
             data = await request.json()
             update = Update.de_json(data, application.bot)
             await application.process_update(update)
