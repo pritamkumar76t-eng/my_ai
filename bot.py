@@ -1,5 +1,6 @@
 """Smart Telegram Bot with Firebase Learning & Correction System."""
 import os
+import sys
 import logging
 import asyncio
 import re
@@ -15,26 +16,56 @@ from telegram.ext import (
     filters,
 )
 
+# ─── Debug: Print env vars at startup ───
+print("=" * 60, file=sys.stderr)
+print("BOT STARTING...", file=sys.stderr)
+print(f"PORT: {os.environ.get('PORT', 'NOT SET')}", file=sys.stderr)
+print(f"DATA_DIR: {os.environ.get('DATA_DIR', 'NOT SET')}", file=sys.stderr)
+print(f"WEBHOOK_URL: {'SET' if os.environ.get('WEBHOOK_URL') else 'NOT SET'}", file=sys.stderr)
+print(f"BOT_TOKEN: {'SET' if os.environ.get('BOT_TOKEN') else 'NOT SET'}", file=sys.stderr)
+print(f"FIREBASE_CREDENTIALS: {'SET' if os.environ.get('FIREBASE_CREDENTIALS') else 'NOT SET'}", file=sys.stderr)
+print("=" * 60, file=sys.stderr)
+
 from parser import parse_lecture_text
 from chapter_matcher import ChapterMatcher
 from firebase_db import FirebaseDB
 
-# Config
+# ─── Config ──────────────────────────────────────────────────
 TOKEN = os.environ.get("BOT_TOKEN", "")
 PORT = int(os.environ.get("PORT", 8443))
 WEBHOOK_URL = os.environ.get("WEBHOOK_URL", "")
 
-# Logging
+# ─── Logging ───────────────────────────────────────────────────
 logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
     level=logging.INFO,
 )
 logger = logging.getLogger(__name__)
 
-# Init
+# ─── Validate Config ─────────────────────────────────────────
+if not TOKEN:
+    logger.error("❌ BOT_TOKEN is empty! Set it in Render Environment Variables.")
+    sys.exit(1)
+
+if not WEBHOOK_URL:
+    logger.error("❌ WEBHOOK_URL is empty! Set it in Render Environment Variables.")
+    sys.exit(1)
+
+if "your-app" in WEBHOOK_URL or "example" in WEBHOOK_URL:
+    logger.error(f"❌ WEBHOOK_URL is still a placeholder: {WEBHOOK_URL}")
+    logger.error("   Go to Render Dashboard → Environment → Set your actual app URL")
+    sys.exit(1)
+
+logger.info(f"✅ Config OK. WEBHOOK_URL: {WEBHOOK_URL}")
+
+# ─── Init ──────────────────────────────────────────────────────
 DATA_DIR = os.environ.get("DATA_DIR", "./data")
+logger.info(f"Loading data from: {DATA_DIR}")
 matcher = ChapterMatcher(DATA_DIR)
+logger.info("✅ ChapterMatcher loaded")
+
 firebase = FirebaseDB()
+logger.info(f"Firebase enabled: {firebase.enabled}")
 
 SUBJECT_DISPLAY_MAP = {
     "botny": "Botany",
@@ -262,15 +293,10 @@ async def error_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def main():
-    if not TOKEN:
-        logger.error("BOT_TOKEN not set!")
-        return
-
-    if not WEBHOOK_URL or "your-app" in WEBHOOK_URL:
-        logger.error("WEBHOOK_URL not set correctly!")
-        return
+    logger.info("Starting bot initialization...")
 
     application = Application.builder().token(TOKEN).build()
+    logger.info("✅ Telegram Application created")
 
     correction_conv = ConversationHandler(
         entry_points=[MessageHandler(filters.Regex(r'^(?i)wrong$'), handle_message)],
@@ -289,13 +315,16 @@ async def main():
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
     application.add_error_handler(error_handler)
 
+    logger.info("✅ Handlers registered")
+
     await application.initialize()
     await application.start()
+    logger.info("✅ Application initialized and started")
 
     webhook_path = f"/webhook/{TOKEN}"
     full_url = f"{WEBHOOK_URL}{webhook_path}"
     await application.bot.set_webhook(url=full_url)
-    logger.info(f"Webhook set: {full_url}")
+    logger.info(f"✅ Webhook set: {full_url}")
 
     aio_app = web.Application()
 
@@ -311,7 +340,7 @@ async def main():
     await runner.setup()
     site = web.TCPSite(runner, "0.0.0.0", PORT)
     await site.start()
-    logger.info(f"Server running on port {PORT}")
+    logger.info(f"✅ Server running on port {PORT}")
 
     while True:
         await asyncio.sleep(3600)
